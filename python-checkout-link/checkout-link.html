@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>支付链接生成器</title>
+  <style>
+    body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial; background:#f6f7fb; margin:0; padding:24px; color:#111; }
+    .card { max-width:760px; margin:0 auto; background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:20px; }
+    h1 { margin:0 0 14px; font-size:22px; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .field { margin-bottom:12px; }
+    label { display:block; font-size:13px; margin-bottom:6px; color:#374151; }
+    input, select, textarea { width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid #d1d5db; border-radius:10px; font-size:14px; outline:none; }
+    textarea { min-height:80px; resize:vertical; }
+    button { border:0; border-radius:10px; padding:10px 14px; font-size:14px; cursor:pointer; background:#111827; color:#fff; }
+    button.secondary { background:#374151; margin-left:8px; }
+    .status { margin-top:12px; font-size:13px; white-space:pre-wrap; }
+    .ok { color:#0f766e; }
+    .err { color:#b91c1c; }
+    .result { margin-top:12px; padding:12px; background:#f9fafb; border:1px solid #e5e7eb; border-radius:10px; word-break:break-all; display:none; }
+    .hint { font-size:12px; color:#6b7280; margin-top:10px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>ChatGPT Team 支付链接生成器</h1>
+
+    <div class="field">
+      <label for="token">accessToken</label>
+      <textarea id="token" placeholder="粘贴 accessToken"></textarea>
+    </div>
+
+    <div class="grid">
+      <div class="field">
+        <label for="workspace_name">workspace_name</label>
+        <input id="workspace_name" value="我的团队" />
+      </div>
+      <div class="field">
+        <label for="seat_quantity">seat_quantity</label>
+        <input id="seat_quantity" type="number" min="1" value="2" />
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="field">
+        <label for="price_interval">price_interval</label>
+        <select id="price_interval">
+          <option value="month" selected>month</option>
+          <option value="year">year</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="promo_code">promo_code</label>
+        <input id="promo_code" value="STRIPEPERKSGPT5BIZ" />
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="field">
+        <label for="country">country</label>
+        <input id="country" value="US" />
+      </div>
+      <div class="field">
+        <label for="currency">currency</label>
+        <input id="currency" value="USD" />
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="cancel_url">cancel_url</label>
+      <input id="cancel_url" value="https://chatgpt.com/?promoCode=STRIPEPERKSGPT5BIZ" />
+    </div>
+
+    <button id="btnGen">生成支付链接</button>
+    <button id="btnOpen" class="secondary" disabled>打开链接</button>
+    <button id="btnCopy" class="secondary" disabled>复制链接</button>
+
+    <div id="status" class="status"></div>
+    <div id="result" class="result"></div>
+    <div class="hint">已改为服务端中转，避免浏览器跨域导致的 Failed to fetch。</div>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById("status");
+    const resultEl = document.getElementById("result");
+    const btnOpen = document.getElementById("btnOpen");
+    const btnCopy = document.getElementById("btnCopy");
+    let checkoutUrl = "";
+
+    function setStatus(text, type = "") {
+      statusEl.className = "status " + type;
+      statusEl.textContent = text;
+    }
+
+    async function copyText(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+
+    async function generate() {
+      checkoutUrl = "";
+      btnOpen.disabled = true;
+      btnCopy.disabled = true;
+      resultEl.style.display = "none";
+      resultEl.textContent = "";
+
+      const accessToken = document.getElementById("token").value.trim();
+      if (!accessToken) {
+        setStatus("请先输入 accessToken", "err");
+        return;
+      }
+
+      const payload = {
+        entry_point: "team_workspace_purchase_modal",
+        plan_name: "chatgptteamplan",
+        team_plan_data: {
+          workspace_name: document.getElementById("workspace_name").value.trim() || "我的团队",
+          price_interval: document.getElementById("price_interval").value,
+          seat_quantity: Number(document.getElementById("seat_quantity").value || 2)
+        },
+        billing_details: {
+          country: document.getElementById("country").value.trim() || "US",
+          currency: document.getElementById("currency").value.trim() || "USD"
+        },
+        cancel_url: document.getElementById("cancel_url").value.trim() || "https://chatgpt.com/",
+        promo_code: document.getElementById("promo_code").value.trim(),
+        checkout_ui_mode: "hosted"
+      };
+
+      setStatus("请求中...");
+
+      try {
+        const res = await fetch("/api/checkout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accessToken, payload })
+        });
+
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          throw new Error(data?.error || `HTTP ${res.status}`);
+        }
+
+        if (!data?.url) {
+          throw new Error("返回中没有 url 字段\n" + JSON.stringify(data, null, 2));
+        }
+
+        checkoutUrl = data.url;
+        btnOpen.disabled = false;
+        btnCopy.disabled = false;
+        resultEl.style.display = "block";
+        resultEl.innerHTML = `<a href="${checkoutUrl}" target="_blank" rel="noopener noreferrer">${checkoutUrl}</a>`;
+        setStatus("生成成功", "ok");
+      } catch (e) {
+        setStatus("生成失败：\n" + (e?.message || String(e)), "err");
+      }
+    }
+
+    document.getElementById("btnGen").addEventListener("click", generate);
+
+    btnOpen.addEventListener("click", () => {
+      if (checkoutUrl) window.open(checkoutUrl, "_blank");
+    });
+
+    btnCopy.addEventListener("click", async () => {
+      if (!checkoutUrl) return;
+      try {
+        await copyText(checkoutUrl);
+        setStatus("已复制链接", "ok");
+      } catch (e) {
+        setStatus("复制失败：\n" + (e?.message || String(e)), "err");
+      }
+    });
+  </script>
+</body>
+</html>
